@@ -13,6 +13,7 @@ set -x
 
 # BUG 
 export VLLM_USE_V1=0
+unset VLLM_USE_V1
 export VLLM_ATTENTION_BACKEND=XFORMERS
 
 
