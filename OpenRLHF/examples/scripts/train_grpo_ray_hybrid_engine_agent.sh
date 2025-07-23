@@ -10,6 +10,11 @@ set -x
 
 # 【rollout number】--n_samples_per_prompt：每个 prompt 要采样的样本数（也就是每个 prompt 会生成多少条独立的轨迹）；
 # 【一个batch（更新一次）生成的rollout data】rollout_batch_size * n_samples_per_prompt = 128*8 = 1024
+
+# BUG 
+export VLLM_USE_V1=0
+export VLLM_ATTENTION_BACKEND=XFORMERS
+
 python3 -m openrlhf.cli.train_ppo_ray \
    --ref_num_nodes 1 \
    --ref_num_gpus_per_node 8 \
