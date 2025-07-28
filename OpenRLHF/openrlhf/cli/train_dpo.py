@@ -13,7 +13,10 @@ from openrlhf.utils import get_strategy, get_tokenizer
 
 
 def train(args):
+
     # configure strategy
+    # --- 作用：get strategy for distributed training --- #
+    
     strategy = get_strategy(args)
     strategy.setup_distributed()
 

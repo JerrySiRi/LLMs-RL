@@ -6,18 +6,33 @@ from transformers import AutoTokenizer
 
 
 def get_strategy(args):
+    """
+    Get the strategy for distributed training. 
+    返回一个 用于分布式训练的策略对象，
+    具体是 openrlhf.utils.deepspeed 模块中的 DeepspeedStrategy 实例，
+    它封装了 DeepSpeed 的配置参数，并为 RLHF 模型训练做好准备。
+    """
     from openrlhf.utils.deepspeed import DeepspeedStrategy
 
     strategy = DeepspeedStrategy(
-        seed=getattr(args, "seed", 42),
-        full_determinism=getattr(args, "full_determinism", False),
-        max_norm=getattr(args, "max_norm", 1.0),
-        micro_train_batch_size=getattr(args, "micro_train_batch_size", 1),
-        train_batch_size=getattr(args, "train_batch_size", 128),
-        zero_stage=args.zero_stage,
-        bf16=getattr(args, "bf16", True),
-        args=args,
+        seed=getattr(args, "seed", 42),                      # 设置随机种子
+        full_determinism=getattr(args, "full_determinism", False),  # 是否启用完全确定性训练
+        max_norm=getattr(args, "max_norm", 1.0),             # 梯度最大范数（用于裁剪）
+        micro_train_batch_size=getattr(args, "micro_train_batch_size", 1),  # 单个 GPU 上的 batch size
+        train_batch_size=getattr(args, "train_batch_size", 128),            # 全局 batch size（所有 GPU 总和）
+        zero_stage=args.zero_stage,                          # DeepSpeed ZeRO 优化阶段（0~3）
+        bf16=getattr(args, "bf16", True),                    # 是否启用 bfloat16 精度
+        args=args,                                           # 传入所有命令行参数，用于后续引用
     )
+    """
+    返回的是一个 DeepspeedStrategy 对象，你可以理解为一个「训练策略控制器」，它统一管理：
+    - 分布式配置（如 ZeRO stage）
+    - 混合精度（bf16）
+    - 梯度裁剪（max norm）
+    - 批大小（micro vs. global）
+    - 随机种子、是否完全确定性（determinism）
+    - 原始命令行参数（保存在 strategy.args 中）
+    """
     return strategy
 
 

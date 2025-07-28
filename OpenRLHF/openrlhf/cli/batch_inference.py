@@ -15,8 +15,9 @@ from openrlhf.utils import get_processor, get_strategy, get_tokenizer
 
 
 def batch_generate_vllm(args):
-    from vllm import LLM, SamplingParams
 
+    # ------ 参数/变量 准备 ------ #
+    from vllm import LLM, SamplingParams
     # configure strategy
     class Empty:
         pass
@@ -30,6 +31,8 @@ def batch_generate_vllm(args):
     tokenizer = AutoTokenizer.from_pretrained(args.pretrain, trust_remote_code=True)
 
     # configure model
+    # enable prefix caching：在长上下文或重复 prompt 的场景下 大幅提升速度、减少显存占用。
+    # 对输入序列的“前缀部分”进行缓存，避免重复计算【存储在KV Cache中】，从而加速后续的推理或训练。
     llm = LLM(
         model=args.pretrain,
         tensor_parallel_size=args.tp_size,
@@ -40,6 +43,12 @@ def batch_generate_vllm(args):
     )
 
     # Create a sampling params object.
+    # repetition penalty: 用于控制重复内容的惩罚，值越大，模型越不倾向于生成重复的内容。
+    # max_tokens: 最大生成的 token 数量。自动控制batch size和生成长度。
+    # vLLM 会根据多个输入请求：
+    # - 自动合并成一个 batch（称为“动态 batch”）
+    # - 控制其 总 token 数不超过 engine_args.max_model_len
+    # - 使用 token 数 + batch concurrency 而不是显式 batch_size
     sampling_params = SamplingParams(
         max_tokens=args.max_new_tokens,
         top_p=args.top_p,
@@ -50,6 +59,8 @@ def batch_generate_vllm(args):
         include_stop_str_in_output=True,
     )
 
+    # ------ 数据准备 ------ #
+    # Blend multiple datasets with optional probability sampling.
     prompts_data = blending_datasets(
         args.dataset,
         args.dataset_probs,
@@ -57,10 +68,14 @@ def batch_generate_vllm(args):
         args.seed,
         max_count=args.max_samples,
     )
+
     if args.iter is None:
+        # 数据集只用1次
+        # select：会根据提供的索引列表，从原始 Hugging Face Dataset 中选择部分样本，生成一个新的子集。
         prompts_data = prompts_data.select(range(min(args.max_samples, len(prompts_data))))
     else:
         # for iterative generation
+        # 抽取出当前轮的数据，每一轮游不一样的start和结束索引
         start_idx = args.iter * args.rollout_batch_size
         end_idx = start_idx + args.rollout_batch_size
         prompts_data = prompts_data.select(range(start_idx, min(end_idx, len(prompts_data))))
@@ -73,6 +88,7 @@ def batch_generate_vllm(args):
     # Conditional SFT inference
     if args.enable_csft:
         for i in range(len(prompts)):
+            # 加入让reward model打分的prompt
             prompts[i] += args.csft_prompt.strip() + " "
 
     # best of n
@@ -88,7 +104,7 @@ def batch_generate_vllm(args):
     with jsonlines.open(args.output_path, mode="w") as writer:
         writer.write_all(output_dataset)
 
-
+# 用HF的推理方式，只不过用了DeepSpeed的参数管理器统一管理训练参数～
 def batch_generate(args):
     # configure strategy
     strategy = get_strategy(args)
@@ -136,6 +152,7 @@ def batch_generate(args):
         prompts_data = prompts_data.select(range(start_idx, min(end_idx, len(prompts_data))))
 
     prompts_dataset = PromptDataset(prompts_data, tokenizer, strategy, input_template=args.input_template)
+    # 在这里设置了batch size啦，HF的推理方式会自动处理batch size，但需要明确指定，不能通过max_new_tokens来控制。
     prompts_dataloader = strategy.setup_dataloader(
         prompts_dataset, args.micro_batch_size, True, False, drop_last=False
     )
@@ -198,6 +215,7 @@ def batch_generate(args):
             writer.write_all(output_dataset)
 
 
+
 def batch_rm_inference(args):
     # configure strategy
     strategy = get_strategy(args)
@@ -205,6 +223,12 @@ def batch_rm_inference(args):
 
     # configure model
     # load huggingface model/config
+    # Construct transformer with a value head for sequence classification.
+    # 这段函数没有加一个新的 Transformer 层
+    # 而是在加载的 HuggingFace 预训练模型基础上添加（或激活）了一个线性回归头（value head），用于 reward 或 critic 输出。
+    # 这个value head，可以重新训练 / 直接用现有模型的head呢
+    # 如预训练模型已经包含 value head（最常见）。使用了 HuggingFace 上带有回归头的 reward 模型，如：
+    # 比如 OpenRLHF/Llama-3-8b-rm-mixture，OpenAssistant/reward-model-deberta-v3-base
     model = get_llm_for_sequence_regression(
         args.pretrain,
         "reward",
@@ -322,6 +346,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_samples", type=int, default=1e8, help="Max number of samples")
     parser.add_argument("--output_path", type=str, default=None, help="Output JSON data path")
 
+
     # For generation
     parser.add_argument("--prompt_max_len", type=int, default=1024, help="Max tokens for prompt")
     parser.add_argument("--max_new_tokens", type=int, default=1024, help="Max new tokens in generation")
@@ -336,12 +361,14 @@ if __name__ == "__main__":
         default=None,
         help="set to rs (Rejection Sampling), csft (Conditional SFT), iter_dpo (Iterative DPO) or None",
     )
+
+
     # For vllm
     parser.add_argument("--tp_size", type=int, default=torch.cuda.device_count())
     parser.add_argument("--max_num_seqs", type=int, default=256)
     parser.add_argument("--enable_prefix_caching", action="store_true", default=False)
 
-    # For Iterative generation and Rejection Sampling
+    # ----- For Iterative generation and Rejection Sampling ----- #
     parser.add_argument(
         "--iter",
         type=int,
