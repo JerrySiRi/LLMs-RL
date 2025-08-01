@@ -15,7 +15,6 @@ from openrlhf.utils import get_processor, get_strategy, get_tokenizer
 
 
 def batch_generate_vllm(args):
-
     # ------ 参数/变量 准备 ------ #
     from vllm import LLM, SamplingParams
     # configure strategy
@@ -46,9 +45,10 @@ def batch_generate_vllm(args):
     # repetition penalty: 用于控制重复内容的惩罚，值越大，模型越不倾向于生成重复的内容。
     # max_tokens: 最大生成的 token 数量。自动控制batch size和生成长度。
     # vLLM 会根据多个输入请求：
-    # - 自动合并成一个 batch（称为“动态 batch”）
+    # - 自动合并成一个 batch（称为【“动态 batch”】，【并确定batch size】）
     # - 控制其 总 token 数不超过 engine_args.max_model_len
     # - 使用 token 数 + batch concurrency 而不是显式 batch_size
+
     sampling_params = SamplingParams(
         max_tokens=args.max_new_tokens,
         top_p=args.top_p,
@@ -75,7 +75,7 @@ def batch_generate_vllm(args):
         prompts_data = prompts_data.select(range(min(args.max_samples, len(prompts_data))))
     else:
         # for iterative generation
-        # 抽取出当前轮的数据，每一轮游不一样的start和结束索引
+        # 抽取出当前轮的数据，每一轮由不一样的start和结束索引确定具体数据是啥
         start_idx = args.iter * args.rollout_batch_size
         end_idx = start_idx + args.rollout_batch_size
         prompts_data = prompts_data.select(range(start_idx, min(end_idx, len(prompts_data))))
@@ -88,7 +88,7 @@ def batch_generate_vllm(args):
     # Conditional SFT inference
     if args.enable_csft:
         for i in range(len(prompts)):
-            # 加入让reward model打分的prompt
+            # prompts列表中加入让reward model打分的prompt，组合成新的
             prompts[i] += args.csft_prompt.strip() + " "
 
     # best of n
@@ -104,6 +104,7 @@ def batch_generate_vllm(args):
     with jsonlines.open(args.output_path, mode="w") as writer:
         writer.write_all(output_dataset)
 
+
 # 用HF的推理方式，只不过用了DeepSpeed的参数管理器统一管理训练参数～
 def batch_generate(args):
     # configure strategy
@@ -111,6 +112,7 @@ def batch_generate(args):
     strategy.setup_distributed(timeout=timedelta(minutes=720))
 
     # configure model
+    # 这里model的forward直接用了self.model.generate()，也就是调了定义中的self.forward，也就是HF的推理方式呢
     model = Actor(
         args.pretrain,
         use_flash_attention_2=args.flash_attn,

@@ -8,8 +8,8 @@ from transformers import AutoTokenizer
 def get_strategy(args):
     """
     Get the strategy for distributed training. 
-    返回一个 用于分布式训练的策略对象，
-    具体是 openrlhf.utils.deepspeed 模块中的 DeepspeedStrategy 实例，
+    把args转化成用于分布式训练的策略对象（deepspeed）
+    具体是 openrlhf.utils.deepspeed 模块中的DeepspeedStrategy实例，
     它封装了 DeepSpeed 的配置参数，并为 RLHF 模型训练做好准备。
     """
     from openrlhf.utils.deepspeed import DeepspeedStrategy
